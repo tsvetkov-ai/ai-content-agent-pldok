@@ -158,3 +158,14 @@ Interested in AI automation, LLMOps, or workflow design? Let's connect!
 - 💼 [LinkedIn](https://www.linkedin.com/in/denis-tsvetkov-b80a95388/)  
 - 🐙 [GitHub](https://github.com/tsvetkov-ai)
 - 📧 DM for collaboration or opportunities
+---
+### 📂 Public Demo
+You can explore the sanitized public version of the agent here:  
+➡️ [Content Agent – Pldok (v4-public).json](./Content%20Agent%20%E2%80%93%20Pldok%20(v4-public).json)
+
+This version includes:
+- full n8n workflow logic (nodes, triggers, and data flow)
+- SQL and JavaScript modules for deduplication, state tracking, and LLM prompts
+- integration structure for SerpAPI, OpenRouter, Gemini, and WordPress REST API  
+
+> 🔒 All API keys, credentials, and internal URLs have been removed for security reasons.
