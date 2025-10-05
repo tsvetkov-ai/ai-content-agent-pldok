@@ -1,0 +1,1638 @@
+{
+  "name": "Content Agent – Pldok (v4)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "c36babac-7a75-4c20-b7c3-f1cd4729a85e",
+      "name": "Schedule – Daily (09:00)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -3280,
+        -672
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS topics_buffer (id SERIAL PRIMARY KEY, title TEXT UNIQUE NOT NULL, link TEXT, snippet TEXT, score INT, source TEXT, created_at TIMESTAMP DEFAULT now());\nCREATE TABLE IF NOT EXISTS evergreen_topics (id SERIAL PRIMARY KEY, title TEXT UNIQUE NOT NULL, keyword TEXT, priority INT DEFAULT 0, last_used_at TIMESTAMP, dynamic_values JSONB);\nCREATE TABLE IF NOT EXISTS api_usage (service TEXT PRIMARY KEY, requests_today INT DEFAULT 0, last_reset DATE DEFAULT CURRENT_DATE);\nCREATE TABLE IF NOT EXISTS workflow_logs (id SERIAL PRIMARY KEY, stage TEXT, message TEXT, data JSONB, created_at TIMESTAMP DEFAULT now());",
+        "options": {}
+      },
+      "id": "289b634f-480f-4b3d-a8e2-aef6ca0ce4f7",
+      "name": "DB Init (tables)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -3072,
+        -672
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE api_usage SET requests_today = 0, last_reset = CURRENT_DATE WHERE service = 'serpapi' AND last_reset < CURRENT_DATE;\nINSERT INTO api_usage (service, requests_today, last_reset) VALUES ('serpapi', 0, CURRENT_DATE) ON CONFLICT (service) DO NOTHING;\nSELECT requests_today FROM api_usage WHERE service = 'serpapi';",
+        "options": {}
+      },
+      "id": "3fee8b46-b05e-414d-98f4-ee580ff61fc1",
+      "name": "Check API Rate Limit (SerpAPI)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2912,
+        -544
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE api_usage SET requests_today = 0, last_reset = CURRENT_DATE WHERE service = 'openrouter' AND last_reset < CURRENT_DATE;\nINSERT INTO api_usage (service, requests_today, last_reset) VALUES ('openrouter', 0, CURRENT_DATE) ON CONFLICT (service) DO NOTHING;\nSELECT requests_today FROM api_usage WHERE service = 'openrouter';",
+        "options": {}
+      },
+      "id": "00fd024d-3a40-4295-9638-b2f34c135638",
+      "name": "Check API Rate Limit (OpenRouter)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -3056,
+        48
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.requests_today}}",
+              "operation": "smaller",
+              "value2": 95
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "70a17ad7-e73a-4efb-9991-8fcae64061fe",
+      "name": "IF Under API Limit? (Serp)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2720,
+        -544
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://serpapi.com/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "engine",
+              "value": "google_news"
+            },
+            {
+              "name": "q",
+              "value": "Polska (PESEL OR \"karta pobytu\" OR obywatelstwo OR imigranci OR urząd OR ZUS OR NFZ OR meldunek OR wiza OR zezwolenie OR praca OR ubezpieczenie)"
+            },
+            {
+              "name": "gl",
+              "value": "pl"
+            },
+            {
+              "name": "hl",
+              "value": "pl"
+            },
+            {
+              "name": "api_key",
+              "value": "={{$credentials.serpApi.apiKey}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "154dc3c6-168b-4d36-907c-feab9aa552c7",
+      "name": "Google News (SerpAPI)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2496,
+        -736
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.statusCode || 200}}",
+              "operation": "smaller",
+              "value2": 400
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b0f4b126-5688-41f4-b7e2-710caa12b43f",
+      "name": "IF API Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2448,
+        -480
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "=YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ SerpAPI Error:\n<code>{{$json.error || 'Unknown error'}}</code>\nStatus: {{$json.statusCode}}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "b6afa9ed-f7ae-4610-9cc8-00bc2c90d64f",
+      "name": "Telegram – API Error Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -2176,
+        -480
+      ],
+      "webhookId": "YOUR_TELEGRAM_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "7RRDjDEZfmCwkh3Z",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE api_usage SET requests_today = requests_today + 1 WHERE service = 'serpapi';",
+        "options": {}
+      },
+      "id": "458b5efb-f37a-4619-87fb-fc39149255e4",
+      "name": "Increment API Counter (Serp)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2176,
+        -704
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://your-wordpress-site.com/wp-json/wp/v2/posts",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "ab104078-9395-451f-a404-f8a457a1958e",
+      "name": "WP Posts – List (published)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2848,
+        -768
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stringSimilarity = (s1, s2) => {\n  const longer = s1.length > s2.length ? s1 : s2;\n  const shorter = s1.length > s2.length ? s2 : s1;\n  if (longer.length === 0) return 1.0;\n  const editDistance = (s1, s2) => {\n    const costs = [];\n    for (let i = 0; i <= s1.length; i++) {\n      let lastValue = i;\n      for (let j = 0; j <= s2.length; j++) {\n        if (i === 0) costs[j] = j;\n        else if (j > 0) {\n          let newValue = costs[j - 1];\n          if (s1.charAt(i - 1) !== s2.charAt(j - 1))\n            newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;\n          costs[j - 1] = lastValue;\n          lastValue = newValue;\n        }\n      }\n      if (i > 0) costs[s2.length] = lastValue;\n    }\n    return costs[s2.length];\n  };\n  return (longer.length - editDistance(longer, shorter)) / longer.length;\n};\n\nconst inputs = $input.all();\nconst newsInput = inputs[0] || [];\nconst postsInput = inputs[1] || [];\nconst keywords = ['PESEL','karta pobytu','obywatelstwo','imigranci','urząd','ZUS','NFZ','meldunek','wiza','pobyt','zezwolenie','obywatel','pracownik','umowa','bank','ubezpieczenie','lekarz','aplikacja','termin','rejestracja','praca'];\n\n const newsRaw = (newsInput[0]?.json?.news_results) || (newsInput[0]?.json?.articles) || [];\nconst wpPosts = Array.isArray(postsInput[0]?.json) ? postsInput[0].json : [];\n\n const existing = wpPosts.map(p => ((p.slug||'') + ' ' + (p.title?.rendered||'')).toLowerCase());\n\n const news = (newsRaw||[]).map(n => ({\n  title: n.title||'',\n  link: n.link||'',\n  snippet: n.snippet||'',\n  source: 'serpapi'\n})).filter(n => n.title && n.link);\n\n const filtered = news.filter(n => {\n  const t = (n.title + ' ' + n.snippet).toLowerCase();\n  const hasKeyword = keywords.some(k => t.includes(k.toLowerCase()));\n  \n  const isDuplicate = existing.some(e => {\n    const similarity = stringSimilarity(t, e);\n    return similarity > 0.75;\n  });\n  \n  return hasKeyword && !isDuplicate;\n}).map(n => {\n  const t = (n.title + ' ' + n.snippet).toLowerCase();\n  const score = keywords.reduce((a, k) => a + (t.includes(k.toLowerCase()) ? 1 : 0), 0);\n  return {...n, score};\n}).sort((a, b) => b.score - a.score);\n\nreturn filtered.slice(0, 5).map(t => ({json: t}));"
+      },
+      "id": "1da076a2-20a6-49ab-b779-29c86eb2c1c0",
+      "name": "Filter & Score (Fuzzy)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2048,
+        -912
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH upsert AS (\n  INSERT INTO topics_buffer (title, link, snippet, score, source)\n  VALUES (\n    '{{$json[\"title\"]}}',\n    '{{$json[\"link\"]}}',\n    '{{$json[\"snippet\"]}}',\n    {{$json[\"score\"]}},\n    '{{$json[\"source\"]}}'\n  )\n  ON CONFLICT (title)\n  DO UPDATE SET\n    link = EXCLUDED.link,\n    snippet = EXCLUDED.snippet,\n    score = EXCLUDED.score,\n    source = EXCLUDED.source,\n    created_at = now()\n  RETURNING *\n),\nupdated AS (\n  UPDATE evergreen_topics e\n  SET last_used_at = now()\n  FROM upsert u\n  WHERE e.title = u.title AND u.source = 'evergreen'\n  RETURNING u.*\n)\nSELECT * FROM upsert;\n",
+        "options": {}
+      },
+      "id": "40a0ecb9-d0d9-4ed9-bbd4-e9f60bd0b4cb",
+      "name": "DB → topics_buffer (safe upsert)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1808,
+        -912
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_logs (stage, message, data)\nVALUES (\n  'daily_collection',\n  'Topics added to buffer',\n  '{{ $json | json }}'\n);\n",
+        "options": {}
+      },
+      "id": "f389f2e6-67f4-451d-afc6-5b2ea384c5cd",
+      "name": "Log → Daily Collection",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1520,
+        -816
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "=YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{\n  $json[\"source\"] === \"evergreen\"\n  ? \"🌱 <b>\" + $json[\"title\"] + \"</b>\\n🏷️ Source: Evergreen | 💯 Score: \" + $json[\"score\"]\n  : \"📰 <b>\" + $json[\"title\"] + \"</b>\\n🏷️ Source: News | 💯 Score: \" + $json[\"score\"] + \"\\n<a href='\" + $json[\"link\"] + \"'>🔗 Czytaj więcej</a>\"\n}}\n",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "2b2a5728-4857-457e-8265-42cbcaa87de5",
+      "name": "Telegram – Daily Topic Added",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1520,
+        -1040
+      ],
+      "webhookId": "YOUR_TELEGRAM_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "7RRDjDEZfmCwkh3Z",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9,
+              "triggerAtMinute": 10
+            }
+          ]
+        }
+      },
+      "id": "3b2a8166-8201-403b-b1cd-e21cb573af84",
+      "name": "Schedule – Publish (every 3 days)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -3280,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "publish",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "c36d1094-59bb-431d-8162-5b27c8c66274",
+      "name": "Webhook – Manual Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -3280,
+        144
+      ],
+      "webhookId": "YOUR_WEBHOOK_ID"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM topics_buffer WHERE created_at >= NOW() - INTERVAL '3 days' ORDER BY score DESC, created_at DESC LIMIT 1;",
+        "options": {}
+      },
+      "id": "3795cca5-df4f-49ba-bb76-a9d93503ed9f",
+      "name": "DB → pick best topic (3d)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2672,
+        -48
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://your-wordpress-site.com/wp-json/wp/v2/posts",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "206bef2c-de0e-4cf1-9bab-4b49f037c8f6",
+      "name": "WP Posts – List (for links)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2160,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "topic-exists",
+              "leftValue": "={{$json.title}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3470fb9f-8dce-4101-ac45-a731def0433e",
+      "name": "IF topic found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -2480,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM evergreen_topics ORDER BY priority DESC, COALESCE(last_used_at, '1970-01-01'::timestamp) ASC LIMIT 1;",
+        "options": {}
+      },
+      "id": "00f80237-5332-4dff-8d2e-0fc9f57ba4c2",
+      "name": "DB → pick evergreen",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2256,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "is-evergreen",
+              "name": "is_evergreen",
+              "value": "=false",
+              "type": "boolean"
+            },
+            {
+              "id": "topic-data",
+              "name": "topic_data",
+              "value": "={{$json}}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "49608ef2-4727-4033-95ec-10c590e8595d",
+      "name": "Set → Topic Meta (news)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2256,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "is-evergreen",
+              "name": "is_evergreen",
+              "value": "=true",
+              "type": "boolean"
+            },
+            {
+              "id": "topic-data",
+              "name": "topic_data",
+              "value": "={{$json}}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c83d5f34-1e92-482f-9b41-e810eb33d13b",
+      "name": "Set → Topic Meta (evergreen)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2064,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "72def502-bb0a-4e17-ad07-8cc7dc15a34a",
+      "name": "Merge → Topic + WP Posts",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        -1760,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.item.json;\n\nconst isEvergreen = input.is_evergreen || false;\nconst topicData = input.topic_data || {};\nconst wpPosts = Array.isArray(input.wp_posts) ? input.wp_posts : [];\n\nconst currentYear = new Date().getFullYear();\nconst dynamicValues = topicData.dynamic_values || {};\n\n// --- выбираем релевантные посты ---\nconst topicTitle = topicData.title || topicData.keyword || 'Nowy artykuł dla Pldok.pl';\nconst topicSnippet = topicData.snippet || '';\nconst topicLink = topicData.link || '';\n\nconst keywords = topicTitle\n  .toLowerCase()\n  .replace(/[^\\p{L}\\p{N}\\s]/gu, '')\n  .split(/\\s+/)\n  .filter(w => w.length > 3);\n\nconst scored = wpPosts.map(p => {\n  const text = `${p.title.rendered} ${p.slug}`.toLowerCase();\n  const score = keywords.reduce((acc, k) => acc + (text.includes(k) ? 1 : 0), 0);\n  return { ...p, score };\n});\n\nconst relevant = scored\n  .filter(p => p.score > 0)\n  .sort((a, b) => b.score - a.score || new Date(b.date) - new Date(a.date))\n  .slice(0, 5);\n\nconst selected = relevant.length > 0\n  ? relevant\n  : wpPosts.sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 3);\n\nconst articleLinks = selected\n  .map(p => `[${p.title.rendered.replace(/\\\"/g, '\\\\\\\"')}](${p.link})`)\n  .join('\\n');\n\n// --- system prompt ---\nlet systemPrompt = `Jesteś starszym redaktorem Pldok.pl — portalu dla migrantów w Polsce.\\n\\n**WYMAGANIA DO ARTYKUŁU:**\\n\\n1. **Struktura:**\\n   - Wstęp (2-3 zdania)\\n   - Sekcje z nagłówkami H2/H3 (używaj HTML: <h2>, <h3>)\\n   - Sekcja \"Najczęściej zadawane pytania\" (3-5 pytań)\\n   - Podsumowanie\\n\\n2. **Styl:**\\n   - Język prosty i przystępny (B1-B2)\\n   - Unikaj prawniczego żargonu\\n   - Używaj konkretnych przykładów\\n   - Ton: przyjazny, wspierający\\n\\n3. **SEO & Linki:**\\n   - Używaj ważnych słów kluczowych w H1-H3\\n   - Oznaczaj aktualne stawki/terminy jako [${currentYear}]\\n   - Dodaj linki do gov.pl tam gdzie to właściwe\\n   - Poniżej lista artykułów Pldok.pl, których możesz użyć jako linki wewnętrzne (1-3 linki, naturalnie wplecione):\\n\\n---\\n${articleLinks}\\n---\\n\\n4. **Długość:** 1500-2000 słów\\n\\n5. **Format:** Zwróć TYLKO treść HTML artykułu (bez <html>, <body>). Rozpocznij od <h1>tytuł</h1>.`;\n\nif (isEvergreen && Object.keys(dynamicValues).length > 0) {\n  systemPrompt += `\\n\\n**AKTUALNE DANE [${currentYear}]:**\\n${JSON.stringify(dynamicValues, null, 2)}`;\n}\n\nconst userPrompt = `Napisz ekspercki artykuł na temat:\\n\\\"${topicTitle}\\\"\\n\\n${topicSnippet ? 'Kontekst: ' + topicSnippet : ''}${topicLink ? '\\nŹródło: ' + topicLink : ''}`;\n\n// --- возвращаем объект ---\nreturn [{\n  json: {\n    topic_title: topicTitle,\n    is_evergreen: isEvergreen,\n    llm_body: {\n      model: $env.LLM_MODEL || 'anthropic/claude-3.5-sonnet',\n      messages: [\n        { role: 'system', content: systemPrompt },\n        { role: 'user', content: userPrompt }\n      ],\n      temperature: 0.3,\n      max_tokens: 8000\n    }\n  }\n}];\n"
+      },
+      "id": "e5804b9b-cd55-48cf-8fd0-b873faa0db14",
+      "name": "Build Prompt (Enhanced)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{$credentials.openRouter.apiKey}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.llm_body}}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "6a50050b-84b1-43e9-8688-554a788bfe55",
+      "name": "LLM – OpenRouter (Claude for PL)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1376,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE api_usage SET requests_today = requests_today + 1 WHERE service = 'openrouter';",
+        "options": {}
+      },
+      "id": "3b5156e6-798b-430a-ad93-a874402e6437",
+      "name": "Increment API Counter (OpenRouter)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1072,
+        -256
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "status-ok",
+              "leftValue": "={{$json.statusCode || 200}}",
+              "rightValue": "400",
+              "operator": {
+                "type": "number",
+                "operation": "smaller"
+              }
+            },
+            {
+              "id": "has-content",
+              "leftValue": "{{ $json.choices[0].message.content }}\n",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "61578025-ccbc-4de0-b743-c6f2c72fb765",
+      "name": "IF LLM Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        -1216,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "=YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ LLM Generation Failed:\n<b>Topic:</b> {{$json[\"topic_title\"] || \"unknown\"}}\n<b>Error:</b> {{$json[\"error\"] || \"No content generated\"}}\n",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "69f5ef45-fa85-42aa-a0c5-a4dc75b88c27",
+      "name": "Telegram – LLM Error Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -880,
+        32
+      ],
+      "webhookId": "YOUR_TELEGRAM_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "7RRDjDEZfmCwkh3Z",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const articlePl = $json?.choices?.[0]?.message?.content || '';\nconst topicTitle = $json?.topic_title || '';\nconst isEvergreen = $json?.is_evergreen || false;\n\nreturn [{\n  json: {\n    article_pl: articlePl,\n    topic_title: topicTitle,\n    is_evergreen: isEvergreen\n  }\n}];\n"
+      },
+      "id": "4d7386c5-6e38-4693-a2d6-e2a868db189d",
+      "name": "Extract Article (PL)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{$json}}",
+        "options": {}
+      },
+      "id": "8ab17c0b-b10b-4906-a3ae-31633ed2e768",
+      "name": "Gemini – Translate to RU",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1200,
+        -400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.statusCode || 200}}",
+              "operation": "smaller",
+              "value2": 400
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e44a612d-d5fb-454f-b50a-46c7b5cc2a1f",
+      "name": "IF Translate Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "=YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ Gemini Translation Failed:\n<b>Topic:</b> {{$json.topic_title}}\n<b>Error:</b> <code>{{$json.error || 'No content'}}</code>\n<b>Status:</b> {{$json.statusCode}}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "9aa944b9-d447-4c53-803e-071dfb3bf7e6",
+      "name": "Telegram – Translate Error Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -240,
+        -128
+      ],
+      "webhookId": "YOUR_TELEGRAM_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "7RRDjDEZfmCwkh3Z",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const articleRu = $json?.choices?.[0]?.message?.content || $json?.article_ru || '';\nreturn [{ json: { ...$input.first().json, article_ru: articleRu } }];\n"
+      },
+      "id": "65dd45fc-76ed-48bf-9bc6-c650d1a5ae3c",
+      "name": "Extract Article (RU)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        -288
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://your-wordpress-site.com/wp-json/wp/v2/posts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "={{$json[\"title\"] || \"Черновик от n8n\"}}"
+            },
+            {
+              "name": "content",
+              "value": "={{$json[\"article_pl\"]}}"
+            },
+            {
+              "name": "status",
+              "value": "draft"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "41a90da4-bb4f-4ba0-92a0-428be3786760",
+      "name": "WP – Create Draft (PL)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -528,
+        -416
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "y2DhZIbciUSNKJtZ",
+          "name": "Unnamed credential"
+        },
+        "wordpressApi": {
+          "id": "ub9ofpkZrOpMTCze",
+          "name": "Wordpress account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-wordpress-site.com/wp-json/wp/v2/posts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "={{$json[\"choices\"][0][\"message\"][\"content\"].match(/<h1[^>]*>(.*?)<\\/h1>/)?.[1] || \"Без заголовка\"}}\n\n"
+            },
+            {
+              "name": "content",
+              "value": "={{$json[\"article_ru\"]}}"
+            },
+            {
+              "name": "status",
+              "value": "draft"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "75ba8730-fde9-4c8b-ac52-baa94a54e902",
+      "name": "WP – Create Draft (RU)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -32,
+        -208
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "y2DhZIbciUSNKJtZ",
+          "name": "Unnamed credential"
+        },
+        "wordpressApi": {
+          "id": "ub9ofpkZrOpMTCze",
+          "name": "Wordpress account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "=YOUR_TELEGRAM_CHAT_ID",
+        "text": "=📝 Черновик создан (PL & RU)\n\n📌 Заголовок: <b>{{$json[\"title\"][\"raw\"]}}</b>\n🌐 Ссылка: <a href=\"{{$json[\"link\"]}}\">{{$json[\"link\"]}}</a>\n🕓 Время: {{$now}}\n\n<i>Сообщение отправлено автоматически через n8n</i>\n",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "98a32e6e-f6ad-4abb-8084-4fcb4668c166",
+      "name": "Telegram – Notify (draft)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        784,
+        -432
+      ],
+      "webhookId": "YOUR_TELEGRAM_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "7RRDjDEZfmCwkh3Z",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "is-evergreen-check",
+              "leftValue": "={{$json.is_evergreen}}",
+              "rightValue": "=true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "fcbdb15c-a6d4-4bda-9ea6-91cef3403891",
+      "name": "IF is evergreen?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [
+        176,
+        -288
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE evergreen_topics SET last_used_at = NOW() WHERE title = $1;",
+        "options": {}
+      },
+      "id": "f9fb8a90-2865-43e1-ba99-26e5b5603051",
+      "name": "DB → Update Evergreen Used At",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        400,
+        -400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM topics_buffer WHERE title = $1;",
+        "options": {
+          "queryReplacement": "=Name: title Value: {{$json[\"title\"][\"raw\"]}}"
+        }
+      },
+      "id": "ed2fa3bf-29f7-49de-b3e9-1dbec95769d0",
+      "name": "DB → Delete Used Topic",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        400,
+        -224
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_logs (stage, message, data)\nVALUES ('publish', 'Article created PL & RU', $1);\n",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json[\"title\"][\"raw\"]) }}\n"
+        }
+      },
+      "id": "61b5f554-3dce-441e-ace3-555beee607a0",
+      "name": "Log → Publish",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        624,
+        -320
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "wmGrN0jolVhKKcxF",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.requests_today}}",
+              "operation": "smaller",
+              "value2": 50
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9589e243-ef28-47d0-b18c-9d2c96e2ba47",
+      "name": "IF Under API Limit? (OpenRouter)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -2880,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "=YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ OpenRouter Limit Reached:\n<b>Requests today:</b> {{$json.requests_today}}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "997e9270-990c-4bdf-833f-3137b7120f38",
+      "name": "Telegram – OpenRouter Limit Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -2672,
+        160
+      ],
+      "webhookId": "YOUR_TELEGRAM_WEBHOOK_ID",
+      "credentials": {
+        "telegramApi": {
+          "id": "7RRDjDEZfmCwkh3Z",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Evergreen Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -3072,
+        -912
+      ],
+      "id": "63a79c37-9f58-4330-bf10-1055332c8809",
+      "name": "Google Sheets (Evergreen)",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Ta3pqawY1y6Kjgef",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Получаем строки из Google Sheets\nconst rows = items.map(item => item.json);\n\n// Настройки\nconst cooldownDays = 14;\nconst today = new Date();\n\n// Фильтруем по last_used_at\nconst filtered = rows.filter(row => {\n  if (!row.LastUsedAt) return true;\n  const lastUsed = new Date(row.LastUsedAt);\n  const diffDays = (today - lastUsed) / (1000 * 60 * 60 * 24);\n  return diffDays >= cooldownDays;\n});\n\n// Сортировка по приоритету\nfiltered.sort((a, b) => Number(b.Priority) - Number(a.Priority));\n\n// Берём первую тему\nconst chosen = filtered[0];\n\nif (!chosen) {\n  return [];\n}\n\n// Возвращаем в полном формате для DB → topics_buffer\nreturn [\n  {\n    json: {\n      title: chosen.Title || \"Untitled evergreen\",\n      link: chosen.link || \"\",       // пустая строка вместо null\n      snippet: chosen.snippet || \"\", // тоже пустая строка\n      score: Number(chosen.Priority) || 0,\n      source: \"evergreen\"\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2048,
+        -1072
+      ],
+      "id": "a9ba41e5-7307-4a3d-ba6d-712d8f7aeb2f",
+      "name": "Choose Evergreen Topic."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Первый item — тема\nconst topic = $items(\"Merge → Topic + WP Posts\", 0).json;\n\n// Остальные item — это список постов\nconst wpPosts = $items(\"Merge → Topic + WP Posts\")\n  .slice(1) // со второго и дальше\n  .map(item => item.json);\n\n// Возвращаем один объект\nreturn [{\n  json: {\n    ...topic,\n    wp_posts: wpPosts\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1584,
+        -80
+      ],
+      "id": "0dc96527-1372-4b16-a782-5b96b32ac2b3",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "const articlePl = $json.article_pl || '';\n\nreturn [{\n  json: {\n    contents: [\n      {\n        role: \"user\",\n        parts: [\n          {\n            text: \"Переведи следующую статью с польского языка на русский. Сохрани всю HTML-разметку (<h1>, <h2>, <h3>, <p>, <a> и т.д.). Не переводи названия польских учреждений: PESEL, ZUS, NFZ, Urząd Wojewódzki, gmina, ePUAP, profil zaufany. Переводи естественно для русскоязычного читателя.\\n\\nСТАТЬЯ НА ПОЛЬСКОМ:\\n\\n\" + articlePl\n          }\n        ]\n      }\n    ]\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1008,
+        -400
+      ],
+      "id": "fd142881-69b0-4288-a207-fb1b70608a62",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "=",
+        "body": "={\n  \"model\": \"openai/gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Ты переводчик. Переводи текст с польского на русский. Сохраняй HTML-разметку (<h1>, <h2>, <p>, <a>). Не переводи названия польских учреждений: PESEL, ZUS, NFZ, Urząd Wojewódzki, gmina, ePUAP, profil zaufany.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"{{$json.article_pl}}\"\n    }\n  ]\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -688,
+        -192
+      ],
+      "id": "54e8f8b8-ccd3-473e-afd9-1fbc718b6893",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "qjeyikWBc21DbUwn",
+          "name": "Bearer Auth account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule – Daily (09:00)": {
+      "main": [
+        [
+          {
+            "node": "DB Init (tables)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Sheets (Evergreen)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB Init (tables)": {
+      "main": [
+        [
+          {
+            "node": "Check API Rate Limit (SerpAPI)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "WP Posts – List (published)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check API Rate Limit (SerpAPI)": {
+      "main": [
+        [
+          {
+            "node": "IF Under API Limit? (Serp)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google News (SerpAPI)": {
+      "main": [
+        [
+          {
+            "node": "IF API Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WP Posts – List (published)": {
+      "main": [
+        [
+          {
+            "node": "Filter & Score (Fuzzy)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter & Score (Fuzzy)": {
+      "main": [
+        [
+          {
+            "node": "DB → topics_buffer (safe upsert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Under API Limit? (Serp)": {
+      "main": [
+        [
+          {
+            "node": "Google News (SerpAPI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB → topics_buffer (safe upsert)": {
+      "main": [
+        [
+          {
+            "node": "Telegram – Daily Topic Added",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log → Daily Collection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log → Daily Collection": {
+      "main": [
+        []
+      ]
+    },
+    "IF API Success?": {
+      "main": [
+        [
+          {
+            "node": "Increment API Counter (Serp)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram – API Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Increment API Counter (Serp)": {
+      "main": [
+        [
+          {
+            "node": "Filter & Score (Fuzzy)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets (Evergreen)": {
+      "main": [
+        [
+          {
+            "node": "Choose Evergreen Topic.",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Evergreen Topic.": {
+      "main": [
+        [
+          {
+            "node": "DB → topics_buffer (safe upsert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule – Publish (every 3 days)": {
+      "main": [
+        [
+          {
+            "node": "Check API Rate Limit (OpenRouter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook – Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check API Rate Limit (OpenRouter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB → pick best topic (3d)": {
+      "main": [
+        [
+          {
+            "node": "IF topic found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WP Posts – List (for links)": {
+      "main": [
+        [
+          {
+            "node": "Merge → Topic + WP Posts",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "IF topic found?": {
+      "main": [
+        [
+          {
+            "node": "Set → Topic Meta (news)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB → pick evergreen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB → pick evergreen": {
+      "main": [
+        [
+          {
+            "node": "Set → Topic Meta (evergreen)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set → Topic Meta (news)": {
+      "main": [
+        [
+          {
+            "node": "Merge → Topic + WP Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check API Rate Limit (OpenRouter)": {
+      "main": [
+        [
+          {
+            "node": "IF Under API Limit? (OpenRouter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Under API Limit? (OpenRouter)": {
+      "main": [
+        [
+          {
+            "node": "DB → pick best topic (3d)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "WP Posts – List (for links)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram – OpenRouter Limit Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set → Topic Meta (evergreen)": {
+      "main": [
+        [
+          {
+            "node": "Merge → Topic + WP Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge → Topic + WP Posts": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt (Enhanced)": {
+      "main": [
+        [
+          {
+            "node": "LLM – OpenRouter (Claude for PL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM – OpenRouter (Claude for PL)": {
+      "main": [
+        [
+          {
+            "node": "IF LLM Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Increment API Counter (OpenRouter)": {
+      "main": [
+        []
+      ]
+    },
+    "IF LLM Success?": {
+      "main": [
+        [
+          {
+            "node": "Extract Article (PL)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Increment API Counter (OpenRouter)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram – LLM Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Article (PL)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "WP – Create Draft (PL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini – Translate to RU": {
+      "main": [
+        []
+      ]
+    },
+    "IF Translate Success?": {
+      "main": [
+        [
+          {
+            "node": "Extract Article (RU)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram – Translate Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Article (RU)": {
+      "main": [
+        [
+          {
+            "node": "WP – Create Draft (RU)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WP – Create Draft (PL)": {
+      "main": [
+        [
+          {
+            "node": "IF is evergreen?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WP – Create Draft (RU)": {
+      "main": [
+        [
+          {
+            "node": "IF is evergreen?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF is evergreen?": {
+      "main": [
+        [
+          {
+            "node": "DB → Update Evergreen Used At",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram – Notify (draft)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log → Publish",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "DB → Delete Used Topic",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Telegram – Notify (draft)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log → Publish",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt (Enhanced)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "IF Translate Success?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f89f5e9a-b909-4edb-8154-fd0db9022838",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f48fc7da3d522317432dba9b2f6dd092a8a18505360c38a2473c8a2382552b2c"
+  },
+  "id": "mzN8v3fypoqUSzvv",
+  "tags": []
+}
